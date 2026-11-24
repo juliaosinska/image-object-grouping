@@ -6,7 +6,7 @@ from morphology import make_structuring_element, opening, closing
 
 
 # WŁASNE: prepare mask for object extraction
-def compute_mask(image_rgb: np.ndarray, channel: str, dark_objects: bool, background: str, background_param, se_size: int):
+def compute_mask(image_rgb: np.ndarray, channel: str, dark_objects: bool, background: str, background_param, se_size: int, threshold=None):
     # 1. channel -> 2D intensity image
     if channel == "Blue":
         intensity = image_rgb[..., 2]
@@ -33,10 +33,14 @@ def compute_mask(image_rgb: np.ndarray, channel: str, dark_objects: bool, backgr
     else:
         raise ValueError("Unsupported background correction. Use 'None', 'Gaussian blur' or 'Top-hat'.")
     
-    # 3. Otsu threshold
-    t, _ = optimized_otsu_threshold(to_threshold)
+    # 3. Otsu threshold / threshold input by user
+    if threshold is None:
+        t, _ = optimized_otsu_threshold(to_threshold)
+    else:
+        t = threshold
+
     mask = apply_threshold(to_threshold, t)
-    
+
     # 4. threshold direction -> binary mask
     if dark_objects and (background != "Top-hat"):
         mask = 255 - mask
