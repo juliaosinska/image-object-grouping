@@ -7,7 +7,7 @@
 #
 # The GUI only calls the analysis functions and draws the results. All analysis is done in:
 #   dataset.py       - load_labels, assign_grid_positions, load_dataset
-#   mask_preparation - compute_mask          objects_analysis - connected_component_labeling
+#   mask_preparation - compute_mask (preview of the masks)
 #   features.py      - build_feature_table   clustering.py    - run_kmeans
 
 import os
@@ -22,7 +22,6 @@ from matplotlib.lines import Line2D
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from mask_preparation import compute_mask
-from objects_analysis import connected_component_labeling
 from dataset import load_dataset
 from features import build_feature_table
 from clustering import run_kmeans
@@ -218,8 +217,8 @@ class ObjectGroupingGUI:
         self.status_var.set("Processing the dataset...")
         self.root.update_idletasks()
         try:
-            self.images = self.preview_images(mask_params)
             self.objects = load_dataset(self.folder, os.path.join(self.folder, "labels.csv"), mask_params)
+            self.images = self.preview_images(mask_params)
             self.df = build_feature_table(self.objects)
         except Exception as e:
             traceback.print_exc()
@@ -245,14 +244,18 @@ class ObjectGroupingGUI:
         self.status_var.set(f"{len(self.images)} images, {len(self.df)} objects ({counts})")
 
     def preview_images(self, mask_params):
-        """Whole images with their masks (only for the preview of the segmentation)."""
+        """Whole images with their masks (only for the preview of the segmentation).
+        Only the mask is computed here (cheap); the number of objects per image is taken from the result of
+        load_dataset, so the slow connected component labeling is not run a second time."""
+        objects_per_file = {}
+        for obj in self.objects:
+            objects_per_file[obj["file"]] = objects_per_file.get(obj["file"], 0) + 1
         images = []
         for name in sorted(os.listdir(self.folder)):
             if name.lower().endswith((".jpg", ".jpeg", ".png")):
                 rgb = np.array(Image.open(os.path.join(self.folder, name)).convert("RGB"))
                 mask, t = compute_mask(rgb, **mask_params)
-                _, n = connected_component_labeling(mask, 8)
-                images.append((name, rgb, mask, n, t))
+                images.append((name, rgb, mask, objects_per_file.get(name, 0), t))
         return images
 
     def descriptor_columns(self):
@@ -325,7 +328,7 @@ class ObjectGroupingGUI:
             axes[0][col].imshow(rgb)
             axes[0][col].set_title(name, fontsize=9)
             axes[1][col].imshow(mask, cmap="gray")
-            axes[1][col].set_title(f"mask: t = {t}, {n} objects", fontsize=9)
+            axes[1][col].set_title(f"mask: t = {t}, {n} objects with a category", fontsize=9)
             for ax in axes[:, col]:
                 ax.axis("off")
 
@@ -354,7 +357,9 @@ class ObjectGroupingGUI:
             ax.axis("off")
         for ax, feature in zip(axes.ravel(), features):
             data = [self.df.loc[self.df["category"] == c, feature].to_numpy() for c in self.categories]
-            parts = ax.boxplot(data, patch_artist=True, widths=0.6)
+            # black median line - the default orange one disappears on the red box
+            parts = ax.boxplot(data, patch_artist=True, widths=0.6,
+                               medianprops={"color": "black", "linewidth": 1.8})
             ax.set_xticks(range(1, len(self.categories) + 1), self.categories, fontsize=8)
             for patch, c in zip(parts["boxes"], self.categories):
                 patch.set_facecolor(self.category_style(c)[0])
@@ -454,10 +459,12 @@ class ObjectGroupingGUI:
             return
         columns = list(self.df.columns)
         self.table.configure(columns=columns)
+        # columns stretch to fill the whole width of the table (and follow the window size);
+        # the width is only the starting proportion and minwidth keeps the values readable
         for col in columns:
-            width = 110 if col in ("file", "category") else 85
+            width = 90 if col in ("file", "category") else 70
             self.table.heading(col, text=col, command=lambda c=col: self.sort_table(c))
-            self.table.column(col, width=width, anchor=tk.CENTER, stretch=False)
+            self.table.column(col, width=width, minwidth=50, anchor=tk.CENTER, stretch=True)
         for i, c in enumerate(self.categories):
             self.table.tag_configure(c, background=TABLE_TAG_COLORS[i % len(TABLE_TAG_COLORS)])
         for _, row in self.df.iterrows():
